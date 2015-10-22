@@ -67,6 +67,8 @@ team_t team = {
 /* For coalesce */
 #define PHYSICAL_NEXT_W(bp) ((char *)(bp) + GET_SIZE((char *)(bp)))
 #define PHYSICAL_PREV_W(bp) ((char *)(bp) - WSIZE)
+#define PHYSICAL_PREV_BLK(bp) ((char *)(bp) - GET_SIZE(PHYSICAL_PREV_W(bp)))
+#define PHYSICAL_NEXT_BLK(bp) PHYSICAL_NEXT_W(bp)
 
 /* Set next/previous pointer*/
 #define SET_NEXT(f, t)  PUT(f + WSIZE, t)
@@ -75,6 +77,10 @@ team_t team = {
 #define IS_END(bp)      (GET_SIZE(bp) == 0)
 
 void* heap_listp = NULL;
+
+/* Function prototypes */
+void *insert_block(void *);
+void unlink(void *);
 
 /**********************************************************
  * mm_init
@@ -85,13 +91,16 @@ void* heap_listp = NULL;
  {
      if ((heap_listp = mem_sbrk(3*WSIZE)) == (void *)-1)
          return -1;
-     PUT(heap_listp, 0);                 // alignment padding
-     PUT(heap_listp + (1 * WSIZE), 0);   // Heap pointer
-     PUT(heap_listp + (1 * WSIZE), PACK(0, 1));   // Begining of heap indicator
-     PUT(heap_listp + (1 * WSIZE), PACK(0, 1));   // End of heap indicator
-     heap_listp += WSIZE;
+     PUT(heap_listp + (1 * WSIZE), PACK(2 * DSIZE, 1));   // Header
+     PUT(heap_listp + (1 * WSIZE), 0);                    // Next pointer
+     PUT(heap_listp + (1 * WSIZE), 0);                    // Prev pointer
+     PUT(heap_listp + (1 * WSIZE), PACK(2 * DSIZE, 1));   // Footer
+     PUT(heap_listp + (1 * WSIZE), PACK(0, 1));           // Begining of heap indicator
+     PUT(heap_listp + (1 * WSIZE), PACK(0, 1));           // End of heap indicator
      return 0;
  }
+
+
 
 /**********************************************************
  * coalesce
@@ -113,25 +122,49 @@ void *coalesce(void *bp)
     }
 
     else if (prev_alloc && !next_alloc) { /* Case 2 */
-        size += GET_SIZE(HDRP(NEXT_BLKP(bp)));
+        // Size of next block is stored in the next word
+        size += GET_SIZE(PHYSICAL_NEXT_W(bp));
+        void *next_blk = PHYSICAL_NEXT_BLK(bp);
+
+        // unlink next block from neighbors
+        unlink(next_blk);
+
+        // construct this block (set sizes only, leave pointers alone)
         PUT(HDRP(bp), PACK(size, 0));
         PUT(FTRP(bp), PACK(size, 0));
-        return (bp);
+        return insert_block(bp);
     }
 
     else if (!prev_alloc && next_alloc) { /* Case 3 */
-        size += GET_SIZE(HDRP(PREV_BLKP(bp)));
-        PUT(FTRP(bp), PACK(size, 0));
-        PUT(HDRP(PREV_BLKP(bp)), PACK(size, 0));
-        return (PREV_BLKP(bp));
+        // Size of prev. block is sotred in the word
+        // immediately before bp's header
+        size += GET_SIZE(PHYSICAL_PREV_W(bp));
+
+        // Extract the addr. of previous block
+        void *prev_blk = PHYSICAL_PREV_BLK(bp);
+
+        // Unlink prev. block from its neighbors
+        unlink(prev_blk);
+
+        // Setup header and footer
+        PUT(HDRP(prev_blk), PACK(size, 0));
+        PUT(FTRP(prev_blk), PACK(size, 0));
+        return insert_block(prev_blk);
     }
 
     else {            /* Case 4 */
-        size += GET_SIZE(HDRP(PREV_BLKP(bp)))  +
-            GET_SIZE(FTRP(NEXT_BLKP(bp)))  ;
-        PUT(HDRP(PREV_BLKP(bp)), PACK(size,0));
-        PUT(FTRP(NEXT_BLKP(bp)), PACK(size,0));
-        return (PREV_BLKP(bp));
+        size += GET_SIZE(PHYSICAL_PREV_W(bp));
+        size += GET_SIZE(PHYSICAL_NEXT_W(bp));
+
+        void *prev_blk = PHYSICAL_PREV_BLK(bp);
+        void *next_blk = PHYSICAL_NEXT_BLK(bp);
+
+        unlink(prev_blk);
+        unlink(next_blk);
+
+        PUT(HDRP(prev_blk), PACK(size,0));
+        PUT(FTRP(prev_blk), PACK(size,0));
+        return insert_block(prev_blk);
     }
 }
 
@@ -163,24 +196,6 @@ void *extend_heap(size_t words)
     return coalesce(bp);
 }
 
-void *insert_block(char *bp){
-    // 1- Get the next element from head
-    void *tmp = NEXT_BLKP(heap_listp);
-
-    // 2- prev of bp is heap_listp, next of heap_listp is bp
-    SET_PREV(bp, heap_listp);
-    SET_NEXT(heap_listp, bp)
-
-    // 3- if not the end, tmp.prev = bp
-    if (!IS_END(tmp)){
-        SET_PREV(tmp, bp)
-    }
-    
-    // 4- bp.next = tmp
-    SET_NEXT(bp, tmp)
-    return bp
-}
-
 
 /**********************************************************
  * find_fit
@@ -192,7 +207,8 @@ void * find_fit(size_t asize)
 {
     void *bp;
     // To find fit, search from heap_listp (which is the 'root')
-    for (bp = heap_listp; GET_SIZE(HDRP(bp)) > 0; bp = NEXT_BLKP(bp))
+    // bp = 0 indicates end of heap
+    for (bp = heap_listp; bp && GET_SIZE(HDRP(bp)) > 0; bp = NEXT_BLKP(bp))
     {
         if (!GET_ALLOC(HDRP(bp)) && (asize <= GET_SIZE(HDRP(bp))))
         {
@@ -224,7 +240,12 @@ void mm_free(void *bp)
     if(bp == NULL){
       return;
     }
+
+    // Header info is in the word before bp
+    bp -= WSIZE;
     size_t size = GET_SIZE(HDRP(bp));
+
+    // Restore allocation bit to 0
     PUT(HDRP(bp), PACK(size,0));
     PUT(FTRP(bp), PACK(size,0));
     coalesce(bp);
@@ -250,19 +271,21 @@ void *mm_malloc(size_t size)
         return NULL;
 
     /* Adjust block size to include overhead and alignment reqs. */
-    
     if (size <= DSIZE)
         asize = 2 * DSIZE;
     else
         asize = DSIZE * ((size + (DSIZE) + (DSIZE-1))/ DSIZE);
 
-    // Extra 2 words of overhead from explicit list (2 pointers)
-    size += DSIZE;
-
     /* Search the free list for a fit */
     if ((bp = find_fit(asize)) != NULL) {
+        // first unlink bp from its neighbors 
+        unlink(bp);
+
+        // initialize bp
         place(bp, asize);
-        return bp;
+
+        /* MUST NOT include the header */
+        return bp + WSIZE;
     }
 
     /* No fit found. Get more memory and place the block */
@@ -270,8 +293,9 @@ void *mm_malloc(size_t size)
     if ((bp = extend_heap(extendsize/WSIZE)) == NULL)
         return NULL;
     place(bp, asize);
-    return bp;
 
+    /* MUST NOT include the header */
+    return bp + WSIZE;
 }
 
 /**********************************************************
@@ -298,7 +322,9 @@ void *mm_realloc(void *ptr, size_t size)
       return NULL;
 
     /* Copy the old data. */
-    copySize = GET_SIZE(HDRP(oldptr));
+
+    // Get size from the word before oldptr
+    copySize = GET_SIZE(HDRP(oldptr - WSIZE));
     if (size < copySize)
       copySize = size;
     memcpy(newptr, oldptr, copySize);
@@ -313,4 +339,37 @@ void *mm_realloc(void *ptr, size_t size)
  *********************************************************/
 int mm_check(void){
   return 1;
+}
+
+void *insert_block(void *bp){
+    // 1- Get the next element from head
+    void *tmp = NEXT_BLKP(heap_listp);
+
+    // 2- prev of bp is heap_listp, next of heap_listp is bp
+    SET_PREV(bp, heap_listp);
+    SET_NEXT(heap_listp, bp)
+
+    // 3- if not the end, tmp.prev = bp
+    if (!IS_END(tmp)){
+        SET_PREV(tmp, bp)
+    }
+    
+    // 4- bp.next = tmp
+    SET_NEXT(bp, tmp)
+    return bp
+}
+
+void unlink(void *bp){
+    void *prev = PREV_BLKP(bp);
+    void *next = PREV_BLKP(bp);
+
+    // If prev is not the begining of heap
+    if (!IS_END(prev)){
+        SET_NEXT(prev, next);
+    }
+
+    // if next is not the end of heap
+    if (!IS_END(next)){
+        SET_PREV(next, prev);
+    }
 }
