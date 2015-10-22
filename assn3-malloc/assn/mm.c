@@ -57,17 +57,17 @@ team_t team = {
 #define GET_ALLOC(p)    (GET(p) & 0x1)
 
 /* Given block ptr bp, compute address of its header and footer */
-#define HDRP(bp)        ((char *)(bp))
-#define FTRP(bp)        ((char *)(bp) + GET_SIZE(HDRP(bp)) - WSIZE)
+#define HDRP(bp)        (void *)((char *)(bp))
+#define FTRP(bp)        (void *)((char *)(bp) + GET_SIZE(HDRP(bp)) - WSIZE)
 
 /* Given block ptr bp, compute address of next and previous blocks */
-#define NEXT_BLKP(bp)   (*((char *)(bp) + WSIZE))
-#define PREV_BLKP(bp)   (*((char *)(bp) + DSIZE))
+#define NEXT_BLKP(bp)   (void *)(*((char *)(bp) + WSIZE))
+#define PREV_BLKP(bp)   (void *)(*((char *)(bp) + DSIZE))
 
 /* For coalesce */
-#define PHYSICAL_NEXT_W(bp) ((char *)(bp) + GET_SIZE((char *)(bp)))
-#define PHYSICAL_PREV_W(bp) ((char *)(bp) - WSIZE)
-#define PHYSICAL_PREV_BLK(bp) ((char *)(bp) - GET_SIZE(PHYSICAL_PREV_W(bp)))
+#define PHYSICAL_NEXT_W(bp) (void *)((char *)(bp) + GET_SIZE((char *)(bp)))
+#define PHYSICAL_PREV_W(bp) (void *)((char *)(bp) - WSIZE)
+#define PHYSICAL_PREV_BLK(bp) (void *)((char *)(bp) - GET_SIZE(PHYSICAL_PREV_W(bp)))
 #define PHYSICAL_NEXT_BLK(bp) PHYSICAL_NEXT_W(bp)
 
 /* Set next/previous pointer*/
@@ -80,7 +80,7 @@ void* heap_listp = NULL;
 
 /* Function prototypes */
 void *insert_block(void *);
-void unlink(void *);
+void blk_unlink(void *);
 
 /**********************************************************
  * mm_init
@@ -127,7 +127,7 @@ void *coalesce(void *bp)
         void *next_blk = PHYSICAL_NEXT_BLK(bp);
 
         // unlink next block from neighbors
-        unlink(next_blk);
+        blk_unlink(next_blk);
 
         // construct this block (set sizes only, leave pointers alone)
         PUT(HDRP(bp), PACK(size, 0));
@@ -144,7 +144,7 @@ void *coalesce(void *bp)
         void *prev_blk = PHYSICAL_PREV_BLK(bp);
 
         // Unlink prev. block from its neighbors
-        unlink(prev_blk);
+        blk_unlink(prev_blk);
 
         // Setup header and footer
         PUT(HDRP(prev_blk), PACK(size, 0));
@@ -159,8 +159,8 @@ void *coalesce(void *bp)
         void *prev_blk = PHYSICAL_PREV_BLK(bp);
         void *next_blk = PHYSICAL_NEXT_BLK(bp);
 
-        unlink(prev_blk);
-        unlink(next_blk);
+        blk_unlink(prev_blk);
+        blk_unlink(next_blk);
 
         PUT(HDRP(prev_blk), PACK(size,0));
         PUT(FTRP(prev_blk), PACK(size,0));
@@ -279,7 +279,7 @@ void *mm_malloc(size_t size)
     /* Search the free list for a fit */
     if ((bp = find_fit(asize)) != NULL) {
         // first unlink bp from its neighbors 
-        unlink(bp);
+        blk_unlink(bp);
 
         // initialize bp
         place(bp, asize);
@@ -347,19 +347,19 @@ void *insert_block(void *bp){
 
     // 2- prev of bp is heap_listp, next of heap_listp is bp
     SET_PREV(bp, heap_listp);
-    SET_NEXT(heap_listp, bp)
+    SET_NEXT(heap_listp, bp);
 
     // 3- if not the end, tmp.prev = bp
     if (!IS_END(tmp)){
-        SET_PREV(tmp, bp)
+        SET_PREV(tmp, bp);
     }
     
     // 4- bp.next = tmp
-    SET_NEXT(bp, tmp)
-    return bp
+    SET_NEXT(bp, tmp);
+    return bp;
 }
 
-void unlink(void *bp){
+void blk_unlink(void *bp){
     void *prev = PREV_BLKP(bp);
     void *next = PREV_BLKP(bp);
 
