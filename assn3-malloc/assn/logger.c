@@ -7,6 +7,9 @@
 
 #define DUAL_PRINTF
 
+#define DEBUG
+#define VERBOSITY LOG_INFO
+
 FILE *logfile = NULL;
 FILE *profiler_logfile = NULL;
 
@@ -44,7 +47,6 @@ void _debug_profiler_logall(float value, int value1, int value2){
 }
 
 void profiler_logit(float value){
-
 	struct timespec clock;
     int ret = clock_gettime(CLOCK_REALTIME, &clock);
     if(ret){
@@ -65,6 +67,10 @@ void profiler_logit(float value){
 }
 
 void vlog(char *msg, LOG_SEVERITY sv, const char *file, const char *fn, int ln){
+#ifndef DEBUG
+    if (sv < VERBOSITY)
+        return;
+#endif
     if(!logfile){
         logfile = fopen(LOGPATH, "a");
         if(!logfile){
@@ -79,7 +85,10 @@ void vlog(char *msg, LOG_SEVERITY sv, const char *file, const char *fn, int ln){
     timeinfo = localtime ( &rawtime );
     char *cur_time = asctime(timeinfo);
     cur_time[strlen(cur_time) - 1] = '\0';
-
+#ifdef DEBUG
+    dual_printf(logfile, "%-15s: %s\n", fn, msg);
+    fflush(logfile);
+#else
     switch(sv){
         case LOG_INFO:
             dual_printf(logfile, "[%s] INFO:    %s\n", cur_time, msg);
@@ -102,6 +111,7 @@ void vlog(char *msg, LOG_SEVERITY sv, const char *file, const char *fn, int ln){
             fflush(logfile);
             exit(-1);
     }
+#endif
 }
 
 void dual_printf(FILE *fp,char *fmt,  ...)
