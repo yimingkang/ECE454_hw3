@@ -52,7 +52,7 @@ team_t team = {
 
 /* Read and write a word at address p */
 #define GET(p)          (*(uintptr_t *)(p))
-//#define PUT(p,val)      (*(uintptr_t *)(p) = (val))
+#define PUT(p,val)      (*(uintptr_t *)(p) = (val))
 
 /* Read the size and allocated fields from address p */
 #define GET_SIZE(p)     (GET(p) & ~(DSIZE - 1))
@@ -63,8 +63,8 @@ team_t team = {
 #define FTRP(bp)        (void *)((char *)(bp) + GET_SIZE(HDRP(bp)) - WSIZE)
 
 /* Given block ptr bp, compute address of next and previous blocks */
-#define NEXT_BLKP(bp)   (void *)(*((char *)(bp) + WSIZE))
-#define PREV_BLKP(bp)   (void *)(*((char *)(bp) + DSIZE))
+#define NEXT_BLKP(bp)   (void *)(*((uint64_t *)((char *)(bp) + WSIZE)))
+#define PREV_BLKP(bp)   (void *)(*((uint64_t *)((char *)(bp) + DSIZE)))
 
 /* For coalesce */
 #define PHYSICAL_NEXT_W(bp) (void *)((char *)(bp) + GET_SIZE((char *)(bp)))
@@ -73,8 +73,8 @@ team_t team = {
 #define PHYSICAL_NEXT_BLK(bp) PHYSICAL_NEXT_W(bp)
 
 /* Set next/previous pointer*/
-#define SET_NEXT(f, t)  PUT((char *)f + WSIZE, (uint64_t) t)
-#define SET_PREV(f, t)  PUT((char *)f + DSIZE, (uint64_t) t)
+#define SET_NEXT(f, t)  PUT((char *)f + WSIZE, (uintptr_t) t)
+#define SET_PREV(f, t)  PUT((char *)f + DSIZE, (uintptr_t) t)
 
 #define IS_END(bp)      GET(bp) == 0 ? 1 : 0
 
@@ -91,24 +91,23 @@ void blk_unlink(void *);
  **********************************************************/
  int mm_init(void)
  {
-     puts("mm_init is called");
      if ((heap_listp = mem_sbrk(6*WSIZE)) == (void *)-1)
          return -1;
      PUT(heap_listp, PACK(2 * DSIZE, 1));   // Header
      PUT(heap_listp + (1 * WSIZE), 0);                    // Next pointer
      PUT(heap_listp + (2 * WSIZE), 0);                    // Prev pointer
      PUT(heap_listp + (3 * WSIZE), PACK(2 * DSIZE, 1));   // Footer
-     PUT(heap_listp + (4 * WSIZE), PACK(0, 1));           // Begining of heap indicator
-     PUT(heap_listp + (5 * WSIZE), PACK(0, 1));           // End of heap indicator
+     PUT(heap_listp + (4 * WSIZE), PACK(0, 1));           // End of heap indicator
+     PUT(heap_listp + (5 * WSIZE), PACK(0, 1));           // Padding
      printf("mm_init heap is at 0x%x, heap brk is at 0x%x\n", heap_listp, heap_listp + 5 * WSIZE);
-     puts("mm_init is done");
+     /*
+     printf("HEAP IS 0x%x\n", *((uint64_t *)((char *)heap_listp)));
+     printf("HEAP +1 IS 0x%x\n", *((uint64_t *)((char *)heap_listp + WSIZE)));
+     printf("HEAP +2 IS 0x%x\n", *((uint64_t *)((char *)heap_listp + 2 * WSIZE)));
+     printf("HEAP +3 IS 0x%x\n", *((uint64_t *)((char *)heap_listp + 3 * WSIZE)));
+     */
      return 0;
  }
-
-void PUT(uintptr_t p, uint64_t val){
-    printf("Writing 0x%x into mem, WSIZE is %d\n", val, WSIZE);
-    memcpy(p, &val, WSIZE);
-}
 
 
 /**********************************************************
@@ -227,14 +226,14 @@ void *extend_heap(size_t words)
 void * find_fit(size_t asize)
 {
     void *bp;
-    printf("find_fit is called with %d\n", asize);
+    trace_heap();
     // To find fit, search from heap_listp (which is the 'root')
     // bp = 0 indicates end of heap
-    printf("HEAP NEXT IS %p\n", *((char *)heap_listp + WSIZE));
-    printf("HEAP PREV IS %p\n", *((char *)heap_listp + DSIZE));
+    printf("HEAP NEXT IS 0x%x\n", *((uint64_t *)((char *)heap_listp + WSIZE)));
     for (bp = heap_listp; bp && GET_SIZE(HDRP(bp)) > 0; bp = NEXT_BLKP(bp))
     {
         printf("find_fit is checking block at 0x%x\n", bp);
+        printf("find_fit value is 0x%x\n", *((uint64_t *)bp));
         if (!GET_ALLOC(HDRP(bp)) && (asize <= GET_SIZE(HDRP(bp))))
         {
             printf("find_fit found a suitable block at 0x%x\n", bp);
@@ -307,8 +306,8 @@ void *mm_malloc(size_t size)
     else
         asize = DSIZE * ((size + (DSIZE) + (DSIZE-1))/ DSIZE);
 
-    printf("mm_malloc is called with size %d, adjusted to %d\n", size, asize);
-    printf("mm_malloc current heap pointer is at 0x%x\n", heap_listp);
+    //printf("mm_malloc is called with size %d, adjusted to %d\n", size, asize);
+    //printf("mm_malloc current heap pointer is at 0x%x\n", heap_listp);
 
     /* Search the free list for a fit */
     if ((bp = find_fit(asize)) != NULL) {
@@ -325,10 +324,10 @@ void *mm_malloc(size_t size)
     /* No fit found. Get more memory and place the block */
     extendsize = MAX(asize, CHUNKSIZE);
     bp = extend_heap(extendsize/WSIZE);
-    printf("mm_malloc extend_heap returned 0x%x\n", bp);
+    //printf("mm_malloc extend_heap returned 0x%x\n", bp);
     if (bp == NULL)
         return NULL;
-    printf("mm_malloc placing bp\n");
+    //printf("mm_malloc placing bp\n");
     place(bp, asize);
 
     /* MUST NOT include the header */
@@ -381,7 +380,7 @@ int mm_check(void){
 void *insert_block(void *bp){
     printf("insert_block: block to be inserted 0x%x\n", bp);
     printf("insert_block: head of heap 0x%x\n", heap_listp);
-    printf("insert_block: heap->next = 0x%x\n", *((char *)heap_listp + WSIZE));
+    printf("insert_block: heap->next = 0x%x\n", *((uint64_t *)((char *)heap_listp + WSIZE)));
     // 1- Get the next element from head
     void *next_ptr = NEXT_BLKP(heap_listp);
 
@@ -391,7 +390,7 @@ void *insert_block(void *bp){
 
     printf("insert_block setting heap->next = 0x%x\n", bp);
     SET_NEXT(heap_listp, bp);
-    printf("HEAP NEXT IS 0x%x\n", (uint64_t) *((char *)heap_listp + WSIZE));
+    printf("HEAP NEXT IS 0x%x\n", *((uint64_t *)((char *)heap_listp + WSIZE)));
 
     if (next_ptr){
         puts("insert_block heap->next is not NULL");
@@ -418,4 +417,15 @@ void blk_unlink(void *bp){
     if (!IS_END(next)){
         SET_PREV(next, prev);
     }
+}
+
+void trace_heap(){
+    uint64_t *h = heap_listp;
+    puts("Checking heap....");
+    while (h){
+        puts("!!!HEAP!!!");
+        printf("ADDR = 0x%x\n", h);
+        h = NEXT_BLKP(h);
+    }
+    puts("Done checking heap....");
 }
