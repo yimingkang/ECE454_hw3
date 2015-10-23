@@ -17,6 +17,7 @@
 
 #include "mm.h"
 #include "memlib.h"
+#include "logger.h"
 
 #define DEBUG
 
@@ -109,7 +110,6 @@ void blk_unlink(void *);
      return 0;
  }
 
-
 /**********************************************************
  * coalesce
  * Covers the 4 cases discussed in the text:
@@ -120,13 +120,13 @@ void blk_unlink(void *);
  **********************************************************/
 void *coalesce(void *bp)
 {
-    printf("coalesce is called with 0x%x\n", bp);
+    logit(LOG_INFO, "coalesce is called with 0x%x\n", bp);
     /* Find physical prev and next block */
     size_t prev_alloc = GET_ALLOC(PHYSICAL_PREV_W(bp));
     size_t next_alloc = GET_ALLOC(PHYSICAL_NEXT_W(bp));
     size_t size = GET_SIZE(HDRP(bp));
 
-    printf("coalesce prev_alloc: %d ... next_alloc: %d\n", prev_alloc, next_alloc);
+    logit(LOG_INFO, "coalesce prev_alloc: %d ... next_alloc: %d\n", prev_alloc, next_alloc);
 
     if (prev_alloc && next_alloc) {       /* Case 1 */
         puts("coalesce case 1");
@@ -199,10 +199,10 @@ void *extend_heap(size_t words)
     /* Allocate an even number of words to maintain alignments */
     size = (words % 2) ? (words+1) * WSIZE : words * WSIZE;
 
-    printf("extend_heap is going to call mem_sbrk with %d\n", size);
+    logit(LOG_INFO, "extend_heap is going to call mem_sbrk with %d\n", size);
     if ( (bp = mem_sbrk(size)) == (void *)-1 && puts("SBRK ERROR!"))
         return NULL;
-    printf("extend_heap old end is: 0x%x\n", bp - WSIZE);
+    logit(LOG_INFO, "extend_heap old end is: 0x%x\n", bp - WSIZE);
 
     /* shift this block up by one word */
     bp -= WSIZE;
@@ -236,7 +236,7 @@ void * find_fit(size_t asize)
         printf("find_fit value is 0x%x\n", *((uint64_t *)bp));
         if (!GET_ALLOC(HDRP(bp)) && (asize <= GET_SIZE(HDRP(bp))))
         {
-            printf("find_fit found a suitable block at 0x%x\n", bp);
+            logit(LOG_INFO, "find_fit found a suitable block at 0x%x\n", bp);
             return bp;
         }
     }
@@ -253,7 +253,7 @@ void place(void* bp, size_t asize)
 
   /* Get the current block size */
   size_t bsize = GET_SIZE(HDRP(bp));
-  printf("place placing at 0x%x, real_size %d, adjusted_size %d\n", bp, asize, bsize);
+  logit(LOG_INFO, "place placing at 0x%x, real_size %d, adjusted_size %d\n", bp, asize, bsize);
 
   PUT(HDRP(bp), PACK(bsize, 1));
   PUT(FTRP(bp), PACK(bsize, 1));
@@ -273,7 +273,7 @@ void mm_free(void *bp)
     // Header info is in the word before bp
     bp -= WSIZE;
     size_t size = GET_SIZE(HDRP(bp));
-    printf("mm_free freeing block starting at 0x%x, size %d\n", bp, size);
+    logit(LOG_INFO, "mm_free freeing block starting at 0x%x, size %d\n", bp, size);
 
     // Restore allocation bit to 0
     PUT(HDRP(bp), PACK(size,0));
@@ -306,8 +306,8 @@ void *mm_malloc(size_t size)
     else
         asize = DSIZE * ((size + (DSIZE) + (DSIZE-1))/ DSIZE);
 
-    //printf("mm_malloc is called with size %d, adjusted to %d\n", size, asize);
-    //printf("mm_malloc current heap pointer is at 0x%x\n", heap_listp);
+    printf("mm_malloc is called with size %d, adjusted to %d\n", size, asize);
+    printf("mm_malloc current heap pointer is at 0x%x\n", heap_listp);
 
     /* Search the free list for a fit */
     if ((bp = find_fit(asize)) != NULL) {
@@ -324,10 +324,10 @@ void *mm_malloc(size_t size)
     /* No fit found. Get more memory and place the block */
     extendsize = MAX(asize, CHUNKSIZE);
     bp = extend_heap(extendsize/WSIZE);
-    //printf("mm_malloc extend_heap returned 0x%x\n", bp);
+    printf("mm_malloc extend_heap returned 0x%x\n", bp);
     if (bp == NULL)
         return NULL;
-    //printf("mm_malloc placing bp\n");
+    printf("mm_malloc placing bp\n");
     place(bp, asize);
 
     /* MUST NOT include the header */
@@ -385,10 +385,10 @@ void *insert_block(void *bp){
     void *next_ptr = NEXT_BLKP(heap_listp);
 
     // 2- prev of bp is heap_listp, next of heap_listp is bp
-    printf("insert_block setting bp->prev = 0x%x\n", heap_listp);
+    logit(LOG_INFO, "insert_block setting bp->prev = 0x%x\n", heap_listp);
     SET_PREV(bp, heap_listp);
 
-    printf("insert_block setting heap->next = 0x%x\n", bp);
+    logit(LOG_INFO, "insert_block setting heap->next = 0x%x\n", bp);
     SET_NEXT(heap_listp, bp);
     printf("HEAP NEXT IS 0x%x\n", *((uint64_t *)((char *)heap_listp + WSIZE)));
 
@@ -398,7 +398,7 @@ void *insert_block(void *bp){
     }
 
     // 4- bp.next = tmp
-    printf("insert_block setting bp->next = 0x%x\n", next_ptr);
+    logit(LOG_INFO, "insert_block setting bp->next = 0x%x\n", next_ptr);
     SET_NEXT(bp, next_ptr);
     puts("insert_block done");
     return bp;
